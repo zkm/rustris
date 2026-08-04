@@ -1,4 +1,4 @@
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -157,7 +157,12 @@ impl Game {
     fn try_rotate(&mut self) {
         let new_rot = (self.current.rot + 1) % 4;
         for kick in [0, -1, 1, -2, 2] {
-            if self.fits(self.current.kind, new_rot, self.current.x + kick, self.current.y) {
+            if self.fits(
+                self.current.kind,
+                new_rot,
+                self.current.x + kick,
+                self.current.y,
+            ) {
                 self.current.rot = new_rot;
                 self.current.x += kick;
                 return;
@@ -167,8 +172,12 @@ impl Game {
 
     fn hard_drop(&mut self) {
         let mut dist = 0;
-        while self.fits(self.current.kind, self.current.rot, self.current.x, self.current.y + dist + 1)
-        {
+        while self.fits(
+            self.current.kind,
+            self.current.rot,
+            self.current.x,
+            self.current.y + dist + 1,
+        ) {
             dist += 1;
         }
         self.current.y += dist;
@@ -248,10 +257,20 @@ fn draw(game: &Game) -> std::io::Result<()> {
     let oy: u16 = 1; // board origin (row)
 
     // border
-    queue!(out, cursor::MoveTo(ox, oy), Print("+"), Print("-".repeat(BOARD_W * 2)), Print("+"))?;
+    queue!(
+        out,
+        cursor::MoveTo(ox, oy),
+        Print("+"),
+        Print("-".repeat(BOARD_W * 2)),
+        Print("+")
+    )?;
     for r in 0..BOARD_H {
         queue!(out, cursor::MoveTo(ox, oy + 1 + r as u16), Print("|"))?;
-        queue!(out, cursor::MoveTo(ox + 1 + (BOARD_W * 2) as u16, oy + 1 + r as u16), Print("|"))?;
+        queue!(
+            out,
+            cursor::MoveTo(ox + 1 + (BOARD_W * 2) as u16, oy + 1 + r as u16),
+            Print("|")
+        )?;
     }
     queue!(
         out,
@@ -269,7 +288,13 @@ fn draw(game: &Game) -> std::io::Result<()> {
         if py >= 0 && (py as usize) < BOARD_H {
             let sx = ox + 1 + (px as u16) * 2;
             let sy = oy + 1 + py as u16;
-            queue!(out, cursor::MoveTo(sx, sy), SetForegroundColor(Color::DarkGrey), Print("::"), ResetColor)?;
+            queue!(
+                out,
+                cursor::MoveTo(sx, sy),
+                SetForegroundColor(Color::DarkGrey),
+                Print("::"),
+                ResetColor
+            )?;
         }
     }
 
@@ -322,15 +347,39 @@ fn draw(game: &Game) -> std::io::Result<()> {
         )?;
     }
 
-    queue!(out, cursor::MoveTo(panel_x, oy + 8), Print(format!("Score: {}", game.score)))?;
-    queue!(out, cursor::MoveTo(panel_x, oy + 9), Print(format!("Lines: {}", game.lines)))?;
-    queue!(out, cursor::MoveTo(panel_x, oy + 10), Print(format!("Level: {}", game.level)))?;
+    queue!(
+        out,
+        cursor::MoveTo(panel_x, oy + 8),
+        Print(format!("Score: {}", game.score))
+    )?;
+    queue!(
+        out,
+        cursor::MoveTo(panel_x, oy + 9),
+        Print(format!("Lines: {}", game.lines))
+    )?;
+    queue!(
+        out,
+        cursor::MoveTo(panel_x, oy + 10),
+        Print(format!("Level: {}", game.level))
+    )?;
 
     queue!(out, cursor::MoveTo(panel_x, oy + 12), Print("Controls:"))?;
     queue!(out, cursor::MoveTo(panel_x, oy + 13), Print("<- ->  move"))?;
-    queue!(out, cursor::MoveTo(panel_x, oy + 14), Print("v      soft drop"))?;
-    queue!(out, cursor::MoveTo(panel_x, oy + 15), Print("space  hard drop"))?;
-    queue!(out, cursor::MoveTo(panel_x, oy + 16), Print("up/x   rotate"))?;
+    queue!(
+        out,
+        cursor::MoveTo(panel_x, oy + 14),
+        Print("v      soft drop")
+    )?;
+    queue!(
+        out,
+        cursor::MoveTo(panel_x, oy + 15),
+        Print("space  hard drop")
+    )?;
+    queue!(
+        out,
+        cursor::MoveTo(panel_x, oy + 16),
+        Print("up/x   rotate")
+    )?;
     queue!(out, cursor::MoveTo(panel_x, oy + 17), Print("p      pause"))?;
     queue!(out, cursor::MoveTo(panel_x, oy + 18), Print("q      quit"))?;
 
@@ -338,8 +387,16 @@ fn draw(game: &Game) -> std::io::Result<()> {
         queue!(out, cursor::MoveTo(panel_x, oy + 20), Print("-- PAUSED --"))?;
     }
     if game.game_over {
-        queue!(out, cursor::MoveTo(panel_x, oy + 20), Print("-- GAME OVER --"))?;
-        queue!(out, cursor::MoveTo(panel_x, oy + 21), Print("press q to quit"))?;
+        queue!(
+            out,
+            cursor::MoveTo(panel_x, oy + 20),
+            Print("-- GAME OVER --")
+        )?;
+        queue!(
+            out,
+            cursor::MoveTo(panel_x, oy + 21),
+            Print("press q to quit")
+        )?;
     }
 
     queue!(out, cursor::MoveTo(0, oy + BOARD_H as u16 + 3))?;
@@ -358,37 +415,36 @@ fn main() -> std::io::Result<()> {
     let result = (|| -> std::io::Result<()> {
         loop {
             let timeout = Duration::from_millis(16);
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => break,
-                            KeyCode::Char('p') => {
-                                if !game.game_over {
-                                    game.paused = !game.paused;
-                                }
-                            }
-                            _ if game.paused || game.game_over => {}
-                            KeyCode::Left => {
-                                game.try_move(-1, 0);
-                            }
-                            KeyCode::Right => {
-                                game.try_move(1, 0);
-                            }
-                            KeyCode::Down => {
-                                if game.try_move(0, 1) {
-                                    game.score += 1;
-                                }
-                            }
-                            KeyCode::Up | KeyCode::Char('x') | KeyCode::Char('X') => {
-                                game.try_rotate();
-                            }
-                            KeyCode::Char(' ') => {
-                                game.hard_drop();
-                            }
-                            _ => {}
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('p') => {
+                        if !game.game_over {
+                            game.paused = !game.paused;
                         }
                     }
+                    _ if game.paused || game.game_over => {}
+                    KeyCode::Left => {
+                        game.try_move(-1, 0);
+                    }
+                    KeyCode::Right => {
+                        game.try_move(1, 0);
+                    }
+                    KeyCode::Down => {
+                        if game.try_move(0, 1) {
+                            game.score += 1;
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('x') | KeyCode::Char('X') => {
+                        game.try_rotate();
+                    }
+                    KeyCode::Char(' ') => {
+                        game.hard_drop();
+                    }
+                    _ => {}
                 }
             }
 
