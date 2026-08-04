@@ -459,6 +459,11 @@ fn draw(game: &Game) -> std::io::Result<()> {
         queue!(
             out,
             cursor::MoveTo(panel_x, oy + 21),
+            Print("press r to restart")
+        )?;
+        queue!(
+            out,
+            cursor::MoveTo(panel_x, oy + 22),
             Print("press q to quit")
         )?;
     }
@@ -489,6 +494,10 @@ fn main() -> std::io::Result<()> {
                         if !game.game_over {
                             game.paused = !game.paused;
                         }
+                    }
+                    KeyCode::Char('r') | KeyCode::Char('R') if game.game_over => {
+                        game = Game::new();
+                        last_tick = Instant::now();
                     }
                     _ if game.paused || game.game_over => {}
                     KeyCode::Left => {
