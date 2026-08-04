@@ -99,6 +99,7 @@ struct Game {
     lines: u32,
     level: u32,
     game_over: bool,
+    game_over_at: Option<Instant>,
     paused: bool,
 }
 
@@ -116,6 +117,7 @@ impl Game {
             lines: 0,
             level: 1,
             game_over: false,
+            game_over_at: None,
             paused: false,
         }
     }
@@ -139,8 +141,13 @@ impl Game {
         self.next_kind = self.bag.next();
         self.current = Piece::spawn(kind);
         if !self.fits(kind, 0, self.current.x, self.current.y) {
-            self.game_over = true;
+            self.end_game();
         }
+    }
+
+    fn end_game(&mut self) {
+        self.game_over = true;
+        self.game_over_at = Some(Instant::now());
     }
 
     fn try_move(&mut self, dx: i32, dy: i32) -> bool {
@@ -186,12 +193,21 @@ impl Game {
     }
 
     fn lock_piece(&mut self) {
+        let mut blocked_out = false;
         for (dr, dc) in self.current.cells() {
             let px = self.current.x + dc;
             let py = self.current.y + dr;
-            if py >= 0 && py < BOARD_H as i32 && px >= 0 && px < BOARD_W as i32 {
+            if py < 0 {
+                blocked_out = true;
+                continue;
+            }
+            if py < BOARD_H as i32 && px >= 0 && px < BOARD_W as i32 {
                 self.board[py as usize][px as usize] = Some(self.current.kind);
             }
+        }
+        if blocked_out {
+            self.end_game();
+            return;
         }
         self.clear_lines();
         self.spawn_next();
@@ -249,6 +265,46 @@ impl Game {
     }
 }
 
+// Milliseconds between each row of the bottom-up "fill" sweep shown on loss.
+const GAME_OVER_ROW_MS: u128 = 25;
+
+fn draw_game_over(out: &mut std::io::Stdout, game: &Game, ox: u16, oy: u16) -> std::io::Result<()> {
+    let elapsed_ms = game
+        .game_over_at
+        .map(|t| t.elapsed().as_millis())
+        .unwrap_or(0);
+    let rows_filled = ((elapsed_ms / GAME_OVER_ROW_MS) as usize).min(BOARD_H);
+
+    for i in 0..rows_filled {
+        let r = BOARD_H - 1 - i;
+        let sy = oy + 1 + r as u16;
+        queue!(
+            out,
+            cursor::MoveTo(ox + 1, sy),
+            SetBackgroundColor(Color::Grey),
+            Print(" ".repeat(BOARD_W * 2)),
+            ResetColor
+        )?;
+    }
+
+    if rows_filled == BOARD_H {
+        let label = " GAME OVER ";
+        let board_w = (BOARD_W * 2) as u16;
+        let label_x = ox + 1 + board_w.saturating_sub(label.len() as u16) / 2;
+        let label_y = oy + 1 + BOARD_H as u16 / 2;
+        queue!(
+            out,
+            cursor::MoveTo(label_x, label_y),
+            SetForegroundColor(Color::White),
+            SetBackgroundColor(Color::Red),
+            Print(label),
+            ResetColor
+        )?;
+    }
+
+    Ok(())
+}
+
 fn draw(game: &Game) -> std::io::Result<()> {
     let mut out = stdout();
     queue!(out, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
@@ -280,21 +336,23 @@ fn draw(game: &Game) -> std::io::Result<()> {
         Print("+")
     )?;
 
-    // ghost piece
-    let ghost_y = game.ghost_y();
-    for (dr, dc) in game.current.cells() {
-        let px = game.current.x + dc;
-        let py = ghost_y + dr;
-        if py >= 0 && (py as usize) < BOARD_H {
-            let sx = ox + 1 + (px as u16) * 2;
-            let sy = oy + 1 + py as u16;
-            queue!(
-                out,
-                cursor::MoveTo(sx, sy),
-                SetForegroundColor(Color::DarkGrey),
-                Print("::"),
-                ResetColor
-            )?;
+    if !game.game_over {
+        // ghost piece
+        let ghost_y = game.ghost_y();
+        for (dr, dc) in game.current.cells() {
+            let px = game.current.x + dc;
+            let py = ghost_y + dr;
+            if py >= 0 && (py as usize) < BOARD_H {
+                let sx = ox + 1 + (px as u16) * 2;
+                let sy = oy + 1 + py as u16;
+                queue!(
+                    out,
+                    cursor::MoveTo(sx, sy),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print("::"),
+                    ResetColor
+                )?;
+            }
         }
     }
 
@@ -315,21 +373,27 @@ fn draw(game: &Game) -> std::io::Result<()> {
         }
     }
 
-    // active piece
-    for (dr, dc) in game.current.cells() {
-        let px = game.current.x + dc;
-        let py = game.current.y + dr;
-        if py >= 0 && (py as usize) < BOARD_H {
-            let sx = ox + 1 + (px as u16) * 2;
-            let sy = oy + 1 + py as u16;
-            queue!(
-                out,
-                cursor::MoveTo(sx, sy),
-                SetBackgroundColor(COLORS[game.current.kind]),
-                Print("  "),
-                ResetColor
-            )?;
+    if !game.game_over {
+        // active piece
+        for (dr, dc) in game.current.cells() {
+            let px = game.current.x + dc;
+            let py = game.current.y + dr;
+            if py >= 0 && (py as usize) < BOARD_H {
+                let sx = ox + 1 + (px as u16) * 2;
+                let sy = oy + 1 + py as u16;
+                queue!(
+                    out,
+                    cursor::MoveTo(sx, sy),
+                    SetBackgroundColor(COLORS[game.current.kind]),
+                    Print("  "),
+                    ResetColor
+                )?;
+            }
         }
+    }
+
+    if game.game_over {
+        draw_game_over(&mut out, game, ox, oy)?;
     }
 
     // side panel
@@ -462,4 +526,35 @@ fn main() -> std::io::Result<()> {
     terminal::disable_raw_mode()?;
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // L (and J) at rot 0 occupy row 0 of their 4x4 mask, which maps to a
+    // cell above the visible board (py = -1) right at spawn. That cell was
+    // previously invisible to `fits()`'s spawn check, so if the very next
+    // tick found the piece already blocked from descending, `lock_piece`
+    // silently dropped the off-board cell instead of ending the game.
+    #[test]
+    fn locking_above_the_board_ends_the_game() {
+        let mut game = Game::new();
+        game.current = Piece::spawn(6); // L piece
+        game.board[0][4] = Some(0); // blocks the piece from descending at all
+        game.tick();
+        assert!(game.game_over);
+    }
+
+    #[test]
+    fn stacking_a_column_to_the_top_ends_the_game() {
+        let mut game = Game::new();
+        for _ in 0..15 {
+            if game.game_over {
+                return;
+            }
+            game.hard_drop();
+        }
+        panic!("expected top-out after repeatedly dropping into the spawn column");
+    }
 }
