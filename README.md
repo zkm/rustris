@@ -26,7 +26,7 @@ Download a prebuilt binary from the [latest release](https://github.com/zkm/rust
 git clone https://github.com/zkm/rustris.git
 cd rustris
 cargo build --release
-./target/release/tetris
+./target/release/rustris
 ```
 
 Or run directly without building manually:

@@ -7,7 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BIN_NAME: tetris
+  BIN_NAME: rustris
 
 permissions:
   contents: write
