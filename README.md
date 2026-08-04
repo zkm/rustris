@@ -5,6 +5,8 @@ A terminal Tetris clone written in Rust, rendered with [crossterm](https://githu
 [![CI](https://github.com/zkm/rustris/actions/workflows/ci.yml/badge.svg)](https://github.com/zkm/rustris/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+![Screenshot of rustris running in a terminal](docs/screenshot.png)
+
 ## Features
 
 - All 7 standard tetrominoes with 7-bag randomization
