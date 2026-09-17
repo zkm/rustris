@@ -101,7 +101,26 @@ struct Game {
     game_over: bool,
     game_over_at: Option<Instant>,
     paused: bool,
+    cascade: Option<Cascade>,
 }
+
+// One visible step of a line-clear/cascade sequence: a board snapshot to hold
+// on screen for `duration_ms`, with `highlight` naming any rows to flash
+// (about to be cleared) before it advances to the next step.
+struct CascadeFrame {
+    board: Vec<Vec<Option<usize>>>,
+    highlight: Vec<usize>,
+    duration_ms: u128,
+}
+
+struct Cascade {
+    frames: Vec<CascadeFrame>,
+    index: usize,
+    frame_started_at: Instant,
+}
+
+const FLASH_MS: u128 = 120;
+const FALL_STEP_MS: u128 = 35;
 
 impl Game {
     fn new() -> Self {
@@ -119,6 +138,7 @@ impl Game {
             game_over: false,
             game_over_at: None,
             paused: false,
+            cascade: None,
         }
     }
 
@@ -210,10 +230,61 @@ impl Game {
             return;
         }
         self.clear_lines();
-        self.spawn_next();
+        if self.cascade.is_none() {
+            self.spawn_next();
+        }
     }
 
+    // Resolves any completed rows (and the chain reaction that follows, as
+    // blocks exposed by a clear fall to fill gaps beneath them) immediately,
+    // updating score/lines/level as it goes. The same sequence of board
+    // states is also recorded as a `Cascade` so `update_cascade` can replay
+    // it on screen at a watchable pace instead of it happening in one frame.
     fn clear_lines(&mut self) {
+        let mut frames = Vec::new();
+        loop {
+            let rows = self.full_rows();
+            if rows.is_empty() {
+                break;
+            }
+            frames.push(CascadeFrame {
+                board: self.board.clone(),
+                highlight: rows,
+                duration_ms: FLASH_MS,
+            });
+
+            let cleared = self.remove_full_rows();
+            self.score_clear(cleared);
+            frames.push(CascadeFrame {
+                board: self.board.clone(),
+                highlight: Vec::new(),
+                duration_ms: FALL_STEP_MS,
+            });
+
+            while self.micro_gravity_step() {
+                frames.push(CascadeFrame {
+                    board: self.board.clone(),
+                    highlight: Vec::new(),
+                    duration_ms: FALL_STEP_MS,
+                });
+            }
+        }
+        if !frames.is_empty() {
+            self.cascade = Some(Cascade {
+                frames,
+                index: 0,
+                frame_started_at: Instant::now(),
+            });
+        }
+    }
+
+    fn full_rows(&self) -> Vec<usize> {
+        (0..BOARD_H)
+            .filter(|&r| self.board[r].iter().all(|c| c.is_some()))
+            .collect()
+    }
+
+    fn remove_full_rows(&mut self) -> u32 {
         let mut cleared = 0;
         let mut new_board: Vec<Vec<Option<usize>>> = Vec::with_capacity(BOARD_H);
         for row in self.board.iter() {
@@ -227,19 +298,56 @@ impl Game {
             new_board.insert(0, vec![None; BOARD_W]);
         }
         self.board = new_board;
+        cleared
+    }
 
-        if cleared > 0 {
-            self.lines += cleared as u32;
-            let points = match cleared {
-                1 => 40,
-                2 => 100,
-                3 => 300,
-                4 => 1200,
-                _ => 0,
-            };
-            self.score += points * self.level;
-            self.level = 1 + self.lines / 10;
+    // Moves every unsupported block down by exactly one row. Repeated calls
+    // let a multi-row overhang fall gradually (one visible step at a time)
+    // rather than snapping straight to its final resting place.
+    fn micro_gravity_step(&mut self) -> bool {
+        let mut moved = false;
+        for col in 0..BOARD_W {
+            for row in (0..BOARD_H - 1).rev() {
+                if self.board[row][col].is_some() && self.board[row + 1][col].is_none() {
+                    self.board[row + 1][col] = self.board[row][col].take();
+                    moved = true;
+                }
+            }
         }
+        moved
+    }
+
+    // Advances the cascade replay by one frame once the current frame's
+    // duration has elapsed; spawns the next piece once playback finishes.
+    fn update_cascade(&mut self) {
+        let Some(cascade) = &mut self.cascade else {
+            return;
+        };
+        if cascade.frame_started_at.elapsed().as_millis()
+            < cascade.frames[cascade.index].duration_ms
+        {
+            return;
+        }
+        cascade.index += 1;
+        if cascade.index >= cascade.frames.len() {
+            self.cascade = None;
+            self.spawn_next();
+        } else {
+            cascade.frame_started_at = Instant::now();
+        }
+    }
+
+    fn score_clear(&mut self, cleared: u32) {
+        self.lines += cleared;
+        let points = match cleared {
+            1 => 40,
+            2 => 100,
+            3 => 300,
+            4 => 1200,
+            _ => 0,
+        };
+        self.score += points * self.level;
+        self.level = 1 + self.lines / 10;
     }
 
     fn drop_interval(&self) -> Duration {
@@ -248,7 +356,7 @@ impl Game {
     }
 
     fn tick(&mut self) {
-        if self.paused || self.game_over {
+        if self.paused || self.game_over || self.cascade.is_some() {
             return;
         }
         if !self.try_move(0, 1) {
@@ -307,6 +415,7 @@ fn draw_game_over(out: &mut std::io::Stdout, game: &Game, ox: u16, oy: u16) -> s
 
 fn draw(game: &Game) -> std::io::Result<()> {
     let mut out = stdout();
+    queue!(out, terminal::BeginSynchronizedUpdate)?;
     queue!(out, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
 
     let ox: u16 = 2; // board origin (column)
@@ -336,7 +445,7 @@ fn draw(game: &Game) -> std::io::Result<()> {
         Print("+")
     )?;
 
-    if !game.game_over {
+    if !game.game_over && game.cascade.is_none() {
         // ghost piece
         let ghost_y = game.ghost_y();
         for (dr, dc) in game.current.cells() {
@@ -356,16 +465,28 @@ fn draw(game: &Game) -> std::io::Result<()> {
         }
     }
 
-    // settled board
-    for r in 0..BOARD_H {
-        for c in 0..BOARD_W {
-            if let Some(kind) = game.board[r][c] {
+    // settled board (or the current cascade replay frame, while one plays)
+    let (board, highlight): (&Vec<Vec<Option<usize>>>, &[usize]) = match &game.cascade {
+        Some(cascade) => {
+            let frame = &cascade.frames[cascade.index];
+            (&frame.board, &frame.highlight)
+        }
+        None => (&game.board, &[]),
+    };
+    for (r, row) in board.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            if let Some(kind) = cell {
                 let sx = ox + 1 + (c as u16) * 2;
                 let sy = oy + 1 + r as u16;
+                let bg = if highlight.contains(&r) {
+                    Color::White
+                } else {
+                    COLORS[*kind]
+                };
                 queue!(
                     out,
                     cursor::MoveTo(sx, sy),
-                    SetBackgroundColor(COLORS[kind]),
+                    SetBackgroundColor(bg),
                     Print("  "),
                     ResetColor
                 )?;
@@ -373,7 +494,7 @@ fn draw(game: &Game) -> std::io::Result<()> {
         }
     }
 
-    if !game.game_over {
+    if !game.game_over && game.cascade.is_none() {
         // active piece
         for (dr, dc) in game.current.cells() {
             let px = game.current.x + dc;
@@ -469,6 +590,7 @@ fn draw(game: &Game) -> std::io::Result<()> {
     }
 
     queue!(out, cursor::MoveTo(0, oy + BOARD_H as u16 + 3))?;
+    queue!(out, terminal::EndSynchronizedUpdate)?;
     out.flush()?;
     Ok(())
 }
@@ -499,7 +621,7 @@ fn main() -> std::io::Result<()> {
                         game = Game::new();
                         last_tick = Instant::now();
                     }
-                    _ if game.paused || game.game_over => {}
+                    _ if game.paused || game.game_over || game.cascade.is_some() => {}
                     KeyCode::Left => {
                         game.try_move(-1, 0);
                     }
@@ -519,6 +641,10 @@ fn main() -> std::io::Result<()> {
                     }
                     _ => {}
                 }
+            }
+
+            if !game.paused {
+                game.update_cascade();
             }
 
             if last_tick.elapsed() >= game.drop_interval() {
@@ -565,5 +691,33 @@ mod tests {
             game.hard_drop();
         }
         panic!("expected top-out after repeatedly dropping into the spawn column");
+    }
+
+    // Clearing a row can expose an overhang elsewhere on the board; that
+    // overhang should fall and, if it completes another row, trigger a chain
+    // of further clears rather than leaving a gap behind.
+    #[test]
+    fn clearing_a_row_cascades_into_chained_clears() {
+        let mut game = Game::new();
+        let trigger_row = BOARD_H - 3;
+        let target_row = BOARD_H - 2; // missing only column 0
+        let overhang_row = BOARD_H - 4; // column 0 only, sitting above target_row's gap
+
+        for col in 0..BOARD_W {
+            game.board[trigger_row][col] = Some(0);
+        }
+        for col in 1..BOARD_W {
+            game.board[target_row][col] = Some(0);
+        }
+        game.board[overhang_row][0] = Some(0);
+
+        game.clear_lines();
+
+        assert_eq!(
+            game.lines, 2,
+            "clearing trigger_row should drop the overhang into target_row's \
+             gap, completing and clearing it too"
+        );
+        assert!(game.board.iter().all(|row| row.iter().all(|c| c.is_none())));
     }
 }
