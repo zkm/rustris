@@ -3,7 +3,13 @@
 A terminal Tetris clone written in Rust, rendered with [crossterm](https://github.com/crossterm-rs/crossterm) — no GPU or display server required, just a terminal.
 
 [![CI](https://github.com/zkm/rustris/actions/workflows/ci.yml/badge.svg)](https://github.com/zkm/rustris/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://github.com/zkm/rustris/actions/workflows/release.yml/badge.svg)](https://github.com/zkm/rustris/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/zkm/rustris)](https://github.com/zkm/rustris/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+![Rust 2024 edition](https://img.shields.io/badge/Rust-2024%20edition-000000?logo=rust&logoColor=white)
+![crossterm](https://img.shields.io/badge/crossterm-5A5A5A)
+![Runs in a terminal](https://img.shields.io/badge/runs%20in-terminal-4D4D4D)
 
 ![Screenshot of rustris running in a terminal](docs/screenshot.png)
 
